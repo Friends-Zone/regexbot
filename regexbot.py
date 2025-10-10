@@ -2,15 +2,18 @@ import os
 import regex as re
 from collections import defaultdict, deque
 
+import regex as re
 from telethon import TelegramClient, events
 
-SED_PATTERN = r'^s/((?:\\\S|[^/])+)/((?:\\\S|[^/])*)(/.*)?'
-GROUP0_RE = re.compile(r'(?<!\\)((?:\\\\)*)\\0')
+import metrics
 
-bot = TelegramClient(None, 6, 'eb06d4abfb49dc3eeb1aeb98ae0f581e')
+SED_PATTERN = r"^s/((?:\\\S|[^/])+)/((?:\\\S|[^/])*)(/.*)?"
+GROUP0_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\0")
+
+bot = TelegramClient(None, 6, "eb06d4abfb49dc3eeb1aeb98ae0f581e")
 bot.parse_mode = None
 
-last_msgs = defaultdict(lambda: deque(maxlen=10))
+last_msgs: defaultdict[str, deque[str]] = defaultdict(lambda: deque(maxlen=10))
 
 
 def cleanup_pattern(match):
@@ -21,6 +24,17 @@ def cleanup_pattern(match):
     to = GROUP0_RE.sub(r'\1\\g<0>', to)
 
     return from_, to
+
+
+def substitute(fr, to, count, flags, m) -> None | str:
+    if not m.raw_text:
+        return None
+
+    s, i = re.subn(fr, to, m.raw_text, count=count, flags=flags)
+    if i > 0:
+        return s
+
+    return None
 
 
 async def doit(message, match):
@@ -49,40 +63,40 @@ async def doit(message, match):
         elif f == 'x':
             flags |= re.VERBOSE
         else:
-            await message.reply('unknown flag: {}'.format(f))
-            return
-
-    def substitute(m):
-        if not m.raw_text:
+            await message.reply(f"unknown flag: {f}")
             return None
 
-        s, i = re.subn(fr, to, m.raw_text, count=count, flags=flags)
-        if i > 0:
-            return s
-
+    response = None
     try:
         msg = None
         substitution = None
         if message.is_reply:
             msg = await message.get_reply_message()
-            substitution = substitute(msg)
+            substitution = substitute(fr, to, count, flags, msg)
         else:
             for msg in reversed(last_msgs[message.chat_id]):
-                substitution = substitute(msg)
+                substitution = substitute(fr, to, count, flags, msg)
                 if substitution is not None:
                     break  # msg is also set
 
         if substitution is not None:
-            return await msg.reply(substitution)
-
+            metrics.SUBSTITUTIONS.inc()
+            response = await msg.reply(substitution)
     except Exception as e:
-        await message.reply('fuck me\n' + str(e))
+        metrics.SED_ERRORS.inc()
+        await message.reply("fuck me\n" + str(e))
+
+    return response
 
 
 @bot.on(events.NewMessage(pattern=SED_PATTERN))
 @bot.on(events.MessageEdited(pattern=SED_PATTERN))
 async def sed(event):
-    message = await doit(event.message, event.pattern_match)
+    metrics.MESSAGES_PROCESSED.inc()
+    metrics.SED_COMMANDS.inc()
+    with metrics.SUBSTITUTION_LATENCY.time():
+        message = await doit(event.message, event.pattern_match)
+
     if message:
         last_msgs[event.chat_id].append(message)
 
@@ -92,11 +106,14 @@ async def sed(event):
 
 @bot.on(events.NewMessage)
 async def catch_all(event):
+    metrics.MESSAGES_PROCESSED.inc()
     last_msgs[event.chat_id].append(event.message)
+    metrics.UNIQUE_CHATS.set(len(last_msgs))
 
 
 @bot.on(events.MessageEdited)
 async def catch_edit(event):
+    metrics.MESSAGES_PROCESSED.inc()
     for i, message in enumerate(last_msgs[event.chat_id]):
         if message.id == event.id:
             last_msgs[event.chat_id][i] = event.message
@@ -104,6 +121,7 @@ async def catch_edit(event):
 
 @bot.on(events.NewMessage(pattern=r"\/privacy"))
 async def privacy(event):
+    metrics.MESSAGES_PROCESSED.inc()
     await event.reply(
         "This bot does not collect or process any user data, apart from a short "
         "backlog of messages to perform regex substitutions on. These are not "
@@ -112,6 +130,7 @@ async def privacy(event):
     )
 
 
-if __name__ == '__main__':
-    with bot.start(bot_token=os.environ['API_KEY']):
+if __name__ == "__main__":
+    metrics.start_http_server(8000)
+    with bot.start(bot_token=os.environ["API_KEY"]):
         bot.run_until_disconnected()

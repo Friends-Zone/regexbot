@@ -1,6 +1,11 @@
-FROM python:3
-COPY requirements.txt /src/
-RUN pip install -r /src/requirements.txt
+FROM python:3.12
+WORKDIR /src
+EXPOSE 8000
+
+RUN pip install poetry
+
+COPY pyproject.toml poetry.lock /src
+RUN poetry install --no-root
 
 COPY . /src
-CMD python /src/regexbot.py
+CMD ["poetry", "run", "python", "/src/regexbot.py"]
