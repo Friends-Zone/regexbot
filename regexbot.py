@@ -89,6 +89,17 @@ async def doit(message, match):
     return response
 
 
+@bot.on(events.NewMessage(pattern=r"\/privacy"))
+async def privacy(event):
+    metrics.MESSAGES_PROCESSED.inc()
+    await event.reply(
+        "This bot does not collect or process any user data, apart from a short "
+        "backlog of messages to perform regex substitutions on. These are not "
+        "logged or stored anywhere, and can not be accessed by the bot's "
+        "administrator in any way."
+    )
+
+
 @bot.on(events.NewMessage(pattern=SED_PATTERN))
 @bot.on(events.MessageEdited(pattern=SED_PATTERN))
 async def sed(event):
@@ -117,17 +128,6 @@ async def catch_edit(event):
     for i, message in enumerate(last_msgs[event.chat_id]):
         if message.id == event.id:
             last_msgs[event.chat_id][i] = event.message
-
-
-@bot.on(events.NewMessage(pattern=r"\/privacy"))
-async def privacy(event):
-    metrics.MESSAGES_PROCESSED.inc()
-    await event.reply(
-        "This bot does not collect or process any user data, apart from a short "
-        "backlog of messages to perform regex substitutions on. These are not "
-        "logged or stored anywhere, and can not be accessed by the bot's "
-        "administrator in any way."
-    )
 
 
 if __name__ == "__main__":
