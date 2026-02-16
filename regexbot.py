@@ -1,6 +1,8 @@
 import os
 import regex as re
+import signal
 from collections import defaultdict, deque
+from contextlib import contextmanager
 
 import regex as re
 from telethon import TelegramClient, events
@@ -14,6 +16,21 @@ bot = TelegramClient(None, 6, "eb06d4abfb49dc3eeb1aeb98ae0f581e")
 bot.parse_mode = None
 
 last_msgs: defaultdict[str, deque[str]] = defaultdict(lambda: deque(maxlen=10))
+
+class TimeoutException(Exception):
+    pass
+
+
+@contextmanager
+def time_limit(seconds):
+    def signal_handler(signum, frame):
+        raise TimeoutException("timed out")
+    signal.signal(signal.SIGALRM, signal_handler)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
 
 
 def cleanup_pattern(match):
@@ -30,7 +47,8 @@ def substitute(fr, to, count, flags, m) -> None | str:
     if not m.raw_text:
         return None
 
-    s, i = re.subn(fr, to, m.raw_text, count=count, flags=flags)
+    with time_limit(2):
+        s, i = re.subn(fr, to, m.raw_text, count=count, flags=flags)
     if i > 0:
         return s
 
